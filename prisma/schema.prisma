@@ -41,3 +41,21 @@ model InviteCode {
   uses       Int        @default(0)
   maxUses    Int        @default(3)
 }
+
+model AdminLog {
+  id        String   @id @default(cuid())
+  action    String
+  details   String
+  createdAt DateTime @default(now())
+}
+
+model AppSettings {
+  id              Int     @id @default(1)
+  signupBonus     Int     @default(20)
+  checkoutBonus   Int     @default(15)
+  referralBonus   Int     @default(20) // only inviter
+  redeemCost      Int     @default(150)
+  maxReferralUses Int     @default(3)
+}
+
+

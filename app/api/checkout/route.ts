@@ -24,12 +24,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2️⃣ Find their open visit
+    // 2️⃣ Find open visit
     const visit = await prisma.visit.findFirst({
-      where: {
-        customerId: customer.id,
-        checkOutAt: null,
-      },
+      where: { customerId: customer.id, checkOutAt: null },
       orderBy: { checkInAt: "desc" },
     });
 
@@ -40,13 +37,13 @@ export async function POST(req: Request) {
       });
     }
 
-    // 3️⃣ Award +15 points
+    // 3️⃣ Award +15 pts
     const updatedCustomer = await prisma.customer.update({
       where: { id: customer.id },
       data: { totalPoints: { increment: 15 } },
     });
 
-    // 4️⃣ Update visit as checked-out
+    // 4️⃣ Update visit
     await prisma.visit.update({
       where: { id: visit.id },
       data: {
@@ -55,13 +52,23 @@ export async function POST(req: Request) {
       },
     });
 
+    // 5️⃣ Log admin action
+    await prisma.adminLog.create({
+      data: {
+        action: "CHECKOUT",
+        details: `${customer.fullName || ""} (${phone}) checked out (+15 pts)`,
+      },
+    });
+
     return NextResponse.json({
       success: true,
       message: "🎉 +15 points awarded!",
       totalPoints: updatedCustomer.totalPoints,
     });
-
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: err.message },
+      { status: 500 }
+    );
   }
 }

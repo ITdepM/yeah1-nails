@@ -15,38 +15,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid phone number" }, { status: 400 });
     }
 
-    // Convert birthday to Date if provided
+    const settings = await prisma.appSettings.findFirst();
+
     const birthdayDate = birthday ? new Date(birthday) : null;
 
-    // --- 1) Find customer (include inviteCode ALWAYS) ---
+    // ---------- FIND customer ----------
     let customer = await prisma.customer.findUnique({
       where: { phone },
-      include: { inviteCode: true },
+      include: { inviteCode: true, invitedBy: true },
     });
 
     let isNewCustomer = false;
 
-    // --- 2) Create customer if missing ---
+    // ---------- CREATE new customer ----------
     if (!customer) {
-      await prisma.customer.create({
+      customer = await prisma.customer.create({
         data: {
-          fullName,
+          fullName: fullName || "",
           phone,
           email,
           birthday: birthdayDate,
           totalPoints: 0,
         },
+        include: { inviteCode: true, invitedBy: true },
       });
 
       isNewCustomer = true;
 
-      // re-fetch with include so types match
-      customer = await prisma.customer.findUnique({
-        where: { phone },
-        include: { inviteCode: true },
+      // LOG: New Signup
+      await prisma.adminLog.create({
+        data: {
+          action: "SIGNUP",
+          details: `New customer signed up: ${customer.fullName} (${customer.phone})`,
+        },
       });
     } else {
-      // update missing info
+      // Update missing fields
       await prisma.customer.update({
         where: { id: customer.id },
         data: {
@@ -56,25 +60,25 @@ export async function POST(req: Request) {
         },
       });
 
-      // re-fetch to refresh updated fields
       customer = await prisma.customer.findUnique({
         where: { phone },
-        include: { inviteCode: true },
+        include: { inviteCode: true, invitedBy: true },
       });
     }
 
-    // --- 3) Apply sign-up bonus +20 ONCE ONLY ---
+    // ---------- SIGNUP BONUS ----------
     let signupBonusApplied = false;
 
-    if (isNewCustomer) {
+    if (isNewCustomer && settings?.signupBonus) {
       await prisma.customer.update({
         where: { id: customer!.id },
-        data: { totalPoints: { increment: 20 } },
+        data: { totalPoints: { increment: settings.signupBonus } },
       });
+
       signupBonusApplied = true;
     }
 
-    // --- 4) Handle referral code ---
+    // ---------- REFERRAL BONUS ----------
     let inviterBonusApplied = false;
 
     if (inviteCode && inviteCode.trim() !== "") {
@@ -84,41 +88,58 @@ export async function POST(req: Request) {
       });
 
       if (inviter && inviter.customerId !== customer!.id) {
-        if (inviter.uses < inviter.maxUses) {
-          // give inviter +20 points
+        if (inviter.uses < (settings?.maxReferralUses ?? 3)) {
+          // Give inviter bonus
           await prisma.customer.update({
             where: { id: inviter.customerId },
-            data: { totalPoints: { increment: 20 } },
+            data: { totalPoints: { increment: settings?.referralBonus ?? 20 } },
           });
 
           inviterBonusApplied = true;
 
-          // update code usage
+          // Update usage
           await prisma.inviteCode.update({
             where: { code: inviteCode },
             data: { uses: { increment: 1 } },
           });
 
-          // save inviter on customer record
+          // Save invited-by relationship
           await prisma.customer.update({
             where: { id: customer!.id },
             data: { invitedById: inviter.customerId },
+          });
+
+          // LOG: Referral
+          await prisma.adminLog.create({
+            data: {
+              action: "REFERRAL",
+              details: `${inviter.customer.fullName} earned +${settings?.referralBonus ?? 20} from inviting ${customer!.fullName}`,
+            },
           });
         }
       }
     }
 
-    // --- 5) Ensure customer has their own referral code ---
+    // ---------- CREATE INVITE CODE IF CUSTOMER DOES NOT HAVE ----------
     if (!customer!.inviteCode) {
+      const code = generateInviteCode();
+
       await prisma.inviteCode.create({
         data: {
-          code: generateInviteCode(),
+          code,
           customerId: customer!.id,
+        },
+      });
+
+      // LOG: invite code created
+      await prisma.adminLog.create({
+        data: {
+          action: "INVITECODE",
+          details: `Generated invite code ${code} for ${customer!.fullName}`,
         },
       });
     }
 
-    // --- 6) Fetch final updated customer with inviteCode ---
     const finalCustomer = await prisma.customer.findUnique({
       where: { phone },
       include: { inviteCode: true },
@@ -130,7 +151,6 @@ export async function POST(req: Request) {
       signupBonusApplied,
       inviterBonusApplied,
     });
-
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

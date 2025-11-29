@@ -26,12 +26,9 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2️⃣ Check if they already have an open visit
+    // 2️⃣ Check for open visit
     const existingVisit = await prisma.visit.findFirst({
-      where: {
-        customerId: customer.id,
-        checkOutAt: null,
-      },
+      where: { customerId: customer.id, checkOutAt: null },
     });
 
     if (existingVisit) {
@@ -41,7 +38,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // 3️⃣ Create a new visit (Check-in)
+    // 3️⃣ Create new visit
     const visit = await prisma.visit.create({
       data: {
         customerId: customer.id,
@@ -51,14 +48,23 @@ export async function POST(req: Request) {
       },
     });
 
+    // 4️⃣ Log admin action (AFTER variables exist)
+    await prisma.adminLog.create({
+      data: {
+        action: "CHECKIN",
+        details: `${customer.fullName || ""} (${phone}) checked in`,
+      },
+    });
+
     return NextResponse.json({
       success: true,
       message: `Welcome ${customer.fullName || ""}!`,
       visitId: visit.id,
     });
-
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: err.message },
+      { status: 500 }
+    );
   }
 }
-
